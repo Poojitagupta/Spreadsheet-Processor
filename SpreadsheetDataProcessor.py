@@ -1,16 +1,16 @@
 import csv
 from Converter import convert_datetime, convert_date, convert_boolean
+from helper.get_data_type import get_data_type
+from helper.get_field_name import get_field_name
+from helper.handle_invalid_data import handle_invalid_data
 
 class SpreadsheetDataProcessor:
-    converter = {"int" : int, "float" : float, "string" : str, "date" : convert_date, "datetime" : convert_datetime, "boolean" : convert_boolean }
+    converter = {"1" : str, "2" : int, "3" : float, "4" : convert_date, "5" : convert_datetime, "6" : convert_boolean }
     def __init__(self):
         self.f = None
         self.fields = []             #List to store the field names
         self.records = []            #List of dictionaries to store each row with the field name
-        self.field_type = {}         #Dictionary to store field name with the data type of that field
-        self.missing = []            #List of dictionary to store row number and field name of missing values
-        self.invalid_type = []       #List of dictionary to store row number and field name of invalid data type of data
-        self.summary = {}            #List of dictionary to store the total and average of numeric fields
+        self.summary = {}            #Dictionary of dictionary to store the total and average of numeric fields
         self.filtered_result = []    #List of dictionary to store filtered result
         self.report = []             #List of list to store the report in which each list denotes a row in csv file
 
@@ -23,42 +23,36 @@ class SpreadsheetDataProcessor:
                 print("Please enter a csv file")
                 continue
             try:
-                self.f = open(path, 'r', newline = '')  
+                self.f = open(path, 'r', newline = '', encoding = "utf-8")
                 return
             except FileNotFoundError:
                 print("File not found")
-            except Exception as e:
-                print(e)
-                print("Enter a valid path")
+            except PermissionError:
+                print("Don't have the permission to access the file")
+            except OSError as e:
+                print("OS error : ", e)
 
     def __read_records(self):
         rows = []
         reader = csv.reader(self.f)
         try:
             self.fields = next(reader)
-        except:
+        except StopIteration:
             print("The file is empty")
+            self.f.close()
             return False
         for row in reader:
             rows.append(row)
 
         if len(rows) == 0:
             print("The file doesn't contain any data")
+            self.f.close()
             return False
         self.f.close()
-        
 
-        for field in self.fields:
-            while True:
-                data_type = input(f"Enter the data type of {field} column (string/int/float/date/datetime/boolean): ").strip().lower()
-                if data_type in SpreadsheetDataProcessor.converter:
-                    self.field_type[field] = data_type
-                    break
-                else:
-                    print("Enter from the given options only")
-
-        for row in rows:
+        for i, row in enumerate(rows):
             if len(row) != len(self.fields):
+                print(f"Skipping row number {i} with incorrect number of fields")
                 continue
             record = {}
             for i in range(len(self.fields)):
@@ -66,33 +60,46 @@ class SpreadsheetDataProcessor:
             self.records.append(record)  
         return True
 
-    def __validate_data(self):
-        for i in range(len(self.records)):
-            for key, value in self.records[i].items():
-                if value == "":
-                    self.missing.append((i, key))
-                    continue
+    def __validate_data(self, field_name, data_type):
+        missing = []
+        invalid = []
+        converter = self.converter[data_type]
 
-                try:
-                    self.records[i][key] = SpreadsheetDataProcessor.converter[self.field_type[key]](self.records[i][key])
+        for i, record in enumerate(self.records):
+            value = record[field_name]
+            if value == "":
+                missing.append(i)
+                continue
+            try:
+                record[field_name] = converter(value)
+            except ValueError:
+                invalid.append(i)
 
-                except ValueError:
-                    self.invalid_type.append((i, key))
+        return missing, invalid
 
     def __calculate_summary(self):
-        while True:
-            field_name = input("Enter the field for which you want to calculate average and total : ").strip()
-            if field_name not in self.fields:
-                print("Please enter correct field name")
-            elif self.field_type[field_name] not in ("int", "float"):
-                print("Please enter the field which have numeric values")
-            else:
-                break
+        
+        field_name = get_field_name(self.fields)
+        data_type = get_data_type(field_name, SpreadsheetDataProcessor.converter)
+        if data_type is None:
+            return
+        if data_type not in ("2", "3"):
+            print("Summary can only be calculated for numeric fields")
+            return
 
+        missing, invalid = self.__validate_data(field_name, data_type)
+        print(f"Missing values : {len(missing)}")
+        print(f"Invalid values : {len(invalid)}")
+        ignored_rows, self.records = handle_invalid_data(SpreadsheetDataProcessor.converter, data_type, field_name, missing, invalid, self.records)
+
+        if ignored_rows is None:
+            print("Calculation is cancelled")
+            return
+        
         total = 0
         cnt = 0
         for i in range(len(self.records)):
-            if ((i, field_name) in self.invalid_type) or ((i, field_name) in self.missing):
+            if i in ignored_rows:
                 continue
             else:
                 total += self.records[i][field_name]
@@ -101,31 +108,45 @@ class SpreadsheetDataProcessor:
             self.summary[field_name] = {"Total" : total, "Average" : total/cnt}
         except ZeroDivisionError:
             self.summary[field_name] = {"Total" : total, "Average" : 0}
-        except Exception as e:
-            print(e)
         print("Calculated summary")
 
     def __filter_records(self):
-        while True:
-            field_name = input("Enter the field name for filteration : ").strip()
-            if field_name not in self.fields:
-                print("Enter correct field name")
-            else:
-                break
+        field_name = get_field_name(self.fields)
+        data_type = get_data_type(field_name, SpreadsheetDataProcessor.converter)
+        if data_type is None:
+            return
+        missing, invalid = self.__validate_data(field_name, data_type)
+        print(f"Missing values : {len(missing)}")
+        print(f"Invalid values : {len(invalid)}")
+        ignored_rows, self.records = handle_invalid_data(SpreadsheetDataProcessor.converter, data_type, field_name, missing, invalid, self.records)
+
+        if ignored_rows is None:
+            return
 
         filtered_record = []
-        while True:
+        for i in range(5):
             value = input("Enter the value for filteration : ")
             try:
-                value = self.converter[self.field_type[field_name]](value)
+                value = self.converter[data_type](value)
                 break
 
             except ValueError:
-                print(f"Selected field for filteration is {field_name} and its data type is {self.field_type[field_name]} so provide the value of correct data type")
+                print(f"Selected field for filteration is {field_name}, provide the value of correct data type")
+            if i == 3:
+                print("This is your last chance otherwise the feature will terminate!")
+            if i == 4:
+                print("Terminating filter process...")
+                return
 
-        for record in self.records:
-            if record[field_name] == value:
-                filtered_record.append(record)
+        for i, record in enumerate(self.records):
+            if i in ignored_rows:
+                continue
+            if data_type == "1":
+                if record[field_name].lower() == value.lower():
+                    filtered_record.append(record)
+            else:
+                if record[field_name] == value:
+                    filtered_record.append(record)
         filter_info = {
             "field": field_name,
             "value": value,
@@ -139,10 +160,6 @@ class SpreadsheetDataProcessor:
         self.report = []
         self.report.append(["SUMMARY"])
         self.report.append(["Total Records", len(self.records)])
-        self.report.append([])
-        self.report.append(["VALIDATION"])
-        self.report.append(["Missing Values", len(self.missing)])
-        self.report.append(["Invalid Values", len(self.invalid_type)])
         self.report.append([])
         if len(self.summary) > 0:
             self.report.append(["Field", "Total", "Average"])
@@ -181,20 +198,21 @@ class SpreadsheetDataProcessor:
                 return
             except FileNotFoundError:
                 print("File not found")
-            except:
-                print("Enter a valid path")
+            except PermissionError:
+                print("Don't have the permission to access the file")
+            except OSError as e:
+                print("OS error : ", e)
 
     def process_spreadsheet(self):
         self.__load_spreadsheet()
         if not self.__read_records():
             return
-        self.__validate_data()
         choice = 1
         while choice:
             try:
-                choice = int(input("Press\n1 for Calculate summary\n2 for Filter records\n3 for Create report\n4 for Exit\n"))
+                choice = int(input("Press\n1 for Calculate summary\n2 for Filter records\n3 for Create report\n4 for again\n5 Exit\n"))
             except ValueError:
-                print("Please enter from 1 to 4")
+                print("Please enter from 1 to 5")
                 continue
             if choice == 1:
                 self.__calculate_summary()
@@ -204,6 +222,9 @@ class SpreadsheetDataProcessor:
                 self.__create_report()
                 self.__save_spreadsheet()
             elif choice == 4:
+                return True
+            elif choice == 5:
                 break
             else:
-                print("Please enter from 1 to 4")
+                print("Please enter from 1 to 5")
+        return False

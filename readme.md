@@ -32,4 +32,3 @@ The project primarily uses Python's standard library.
 1. CSV files only
 2. Data Types Must Be Provided Manually
 3. Filtering Uses Exact Matching
-4. Date and Datetime Formats
